@@ -1,0 +1,576 @@
+import pyupbit
+import time
+import datetime
+import telegram
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import Image
+import threading
+import random
+import pymysql
+
+start = time.time()
+
+# 업비트 로그인 정보 및 로그인 실행/
+bot = telegram.Bot('859518036:AAGnIbbetS1Jx5cSNu9dNd-ymoKlqtXJcQo')
+access = 'rwK8mqQTHnHBSOQpdsRZk3be8alUSkJ42BjUXR7Y'  # access key
+secret = 'PaVH57McZ7kO2FS2A8eXRGPSNEmc1e1s4XPFHHYq'  # secret key
+upbit = pyupbit.Upbit(access, secret)
+
+# 업비트 전체티커조회_list/
+tickers = pyupbit.get_tickers('KRW')
+# print(tickers)
+
+# 조건입력
+trading_period = 'day'
+tot_port_num = 10
+rb_profit = 2
+stop_loss = -5
+ini_bal = 199600
+rb_period = 5  # minutes
+msg_period = 15  # minutes
+mk_period = 4  # hours
+rec_period = 1  # hours
+
+btc_ini = 72241000
+eth_ini = 5550000
+
+# 거래대금 순서 티커조회_list/
+dict_ticker_vs_tv = {}
+dict_ticker_vs_tv_keys = []
+dict_ticker_vs_tv_values = []
+sort_dict_ticker_vs_tv = {}
+sort_dict_ticker_vs_tv_values = []
+sort_dict_ticker_vs_tv_keys = []
+sort_dict_ticker_vs_tv_keys_ratio = []
+sort_dict_ticker_vs_tv_ratio = {}
+def get_ticker_list_of_tv(mylist, period, position):  # mylist, period, position
+    global dict_ticker_vs_tv, dict_ticker_vs_tv_keys, dict_ticker_vs_tv_values, sort_dict_ticker_vs_tv
+    global sort_dict_ticker_vs_tv_values, sort_dict_ticker_vs_tv_keys, sort_dict_ticker_vs_tv_keys_ratio
+    global sort_dict_ticker_vs_tv_ratio
+    ticker_list = mylist
+    dict_ticker_vs_tv = {}
+    dict_ticker_vs_tv_keys = []
+    dict_ticker_vs_tv_values = []
+    sort_dict_ticker_vs_tv = {}
+    sort_dict_ticker_vs_tv_values = []
+    sort_dict_ticker_vs_tv_keys = []
+    sort_dict_ticker_vs_tv_keys_ratio = []
+    sort_dict_ticker_vs_tv_ratio = {}
+    k = 0
+    for i in ticker_list:
+        k = k + 1
+        print(i, 'calling data...', k)
+        while True:
+            try:
+                tv = pyupbit.get_ohlcv(i, count=5, interval=period)['value'][position]
+                dict_ticker_vs_tv[tv] = i  # 거래대금:티커/dict
+                break
+            except:
+                pass
+
+    dict_ticker_vs_tv_keys = list(dict_ticker_vs_tv.keys())  # 거래대금_list
+    sort_dict_ticker_vs_tv_keys = sorted(dict_ticker_vs_tv_keys, reverse=True)  # 거래대금 내림차순 정렬_list
+    sort_dict_ticker_vs_tv_keys = sort_dict_ticker_vs_tv_keys[0:10]
+    sort_dict_ticker_vs_tv_keys_ratio = [i/sum(sort_dict_ticker_vs_tv_keys)
+                                         for i in sort_dict_ticker_vs_tv_keys]
+    for j in sort_dict_ticker_vs_tv_keys:
+        sort_dict_ticker_vs_tv[dict_ticker_vs_tv[j]] = j  # 거래대금 내림차순 티커:거래대금 정렬_dict
+    sort_dict_ticker_vs_tv_keys = list(sort_dict_ticker_vs_tv.keys())
+    for j in range(len(sort_dict_ticker_vs_tv_keys)):
+        sort_dict_ticker_vs_tv_ratio[sort_dict_ticker_vs_tv_keys[j]] = sort_dict_ticker_vs_tv_keys_ratio[j]
+    print(sort_dict_ticker_vs_tv_ratio)
+# print(len(sort_dict_ticker_vs_tv_keys))
+
+# 평균 상승률 순서 상위 20개 티커조회_list/
+dict_ticker_vs_tpv = {}  # tpv = trade price volume
+sort_dict_ticker_vs_tpv_keys = []
+sort_dict_ticker_vs_tpv_values = []
+def get_ticker_list_of_tpv(ma_period, period, position):  # mylist, ma_period, position
+    global dict_ticker_vs_tpv, sort_dict_ticker_vs_tpv_keys, sort_dict_ticker_vs_tpv_values
+    k = 0
+    dict_ticker_vs_tpv = {}
+    sort_dict_ticker_vs_tpv_keys = []
+    sort_dict_ticker_vs_tpv_values = []
+    for i in tickers:
+        k = k + 1
+        print(i, 'calling data...', k)
+        while True:
+            try:
+                tpv = pyupbit.get_ohlcv(i, count=ma_period-(position+1), interval=period)['close'].tolist()
+                now_price = pyupbit.get_current_price(i)
+                tpv = (now_price/(sum(tpv[0:ma_period])/ma_period)-1) * 100
+                dict_ticker_vs_tpv[tpv] = i  # 상승률:티커/dict
+                break
+            except:
+                pass
+    sort_dict_ticker_vs_tpv_keys = sorted(list(dict_ticker_vs_tpv.keys()), reverse=True)
+    for j in sort_dict_ticker_vs_tpv_keys:
+        sort_dict_ticker_vs_tpv_values.append(dict_ticker_vs_tpv[j])
+    sort_dict_ticker_vs_tpv_values = sort_dict_ticker_vs_tpv_values[0:20]
+
+
+# 코인보유잔고
+bal_dict = {}
+bal_krw_dict = {}
+bal_ticker = []
+bal_amount = []
+bal_port = 0
+def get_coin_bal():
+    global bal_dict, bal_ticker, bal_amount, bal_port, bal_krw_dict
+    global tickers
+    bal_dict = {}
+    bal_krw_dict = {}
+    bal_ticker = []
+    bal_amount = []
+    bal_port = 0
+
+    t_coin_bal = upbit.get_balances()
+    for i in range(len(t_coin_bal)):
+        while True:
+            try:
+                krw_name = 'KRW-' + t_coin_bal[i]['currency']
+                if krw_name in tickers:
+                    coin_bal = float(t_coin_bal[i]['balance'])
+                    krw_coin = float(pyupbit.get_current_price(krw_name)) * coin_bal
+                    if krw_coin > 5000:
+                        bal_dict[krw_name] = coin_bal
+                        bal_krw_dict[krw_name] = krw_coin
+                break
+            except:
+                pass
+    bal_ticker = list(bal_dict.keys())
+    bal_amount = list(bal_dict.values())
+    bal_port = len(bal_ticker)
+
+# 수익률 생성
+profit = 0
+profit_min = 0
+profit_min_ticker = 0
+profit_dict = {}
+n = 0
+all_sell_sig = 0
+def get_profit():
+    global bal_ticker, profit, profit_min, profit_min_ticker, profit_dict, n, all_sell_sig, stop_loss
+    profit = 0
+    profit_min = 100
+    profit_min_ticker = 0
+    m = 0
+    profit_dict = {}
+    all_sell_sig = 0
+    if len(bal_ticker) != 0:
+        for i in bal_ticker:
+            while True:
+                try:
+                    avg_price = float(upbit.get_avg_buy_price(i))
+                    now_price = float(pyupbit.get_current_price(i))
+                    profit = (now_price / avg_price - 1) * 100
+                    profit_dict[i] = profit
+
+                    # if profit < profit_min:
+                    #     profit_min = profit
+                    #     profit_min_ticker = i
+                    if profit < stop_loss:
+                        all_sell_sig = 1
+
+                    m = m + 1
+                    print(m, i, format(profit, '3.2f')+'%', '/ sell signal =', all_sell_sig)
+                    break
+                except:
+                    pass
+            time.sleep(0.2)
+    else:
+        n = n + 1
+        print(n, 'no items', '/ sell signal =', all_sell_sig)
+        time.sleep(5)
+
+# 매수비율 생성
+krw_coin_amount = {}
+krw_coin_amount_ratio ={}
+tot_profit = 0
+def get_trade_ratio():
+    global bal_ticker, bal_dict, krw_coin_amount, krw_coin_amount_ratio, ini_bal, tot_profit
+    get_coin_bal()
+    krw_bal1 = upbit.get_balance('KRW')
+    krw_coin_amount = {}
+    krw_coin_amount_ratio = {}
+    for i in bal_ticker:
+        while True:
+            try:
+                krw_coin_amount[i] = float(bal_dict[i]) * float(pyupbit.get_current_price(i))
+                # print(krw_coin_amount[i])
+                break
+            except:
+                pass
+    tot_amount = sum(list(krw_coin_amount.values()))
+    tot_profit = ((tot_amount+krw_bal1)/ini_bal-1)*100
+    # print('전체', tot_amount)
+    for i in bal_ticker:
+        krw_coin_amount_ratio[i] = krw_coin_amount[i]/tot_amount *100
+    # print(krw_coin_amount_ratio)
+get_trade_ratio()
+print(tot_profit)
+
+btc_profit = 0
+def get_btc_rate():
+    global btc_profit
+    while True:
+        try:
+            yes_btc = (pyupbit.get_ohlcv("KRW-BTC", count=2, period="day")['close'][-2])
+            now_btc = (pyupbit.get_current_price("KRW-BTC"))
+            btc_profit = float((now_btc/yes_btc-1) * 100)
+            break
+        except:
+            pass
+get_btc_rate()
+print(btc_profit)
+
+
+ini_date = datetime.datetime(2021, 11, 30) + datetime.timedelta(hours=9)
+def set_initial_variables(set_sig):
+    if set_sig == 1:
+        i_profit = 0
+        i_btc = 0
+        i_eth = 0
+        i_date = 0
+
+        i_data = {'date': [i_date], 'profit': [i_profit], 'btc': [i_btc], 'eth': [i_eth]}
+        i_data = pd.DataFrame(i_data)
+        i_data.to_excel(excel_writer='profit.xlsx')
+
+        bot.send_message('@chaesoone', 'Profit chart was initialized.')
+    else:
+        pass
+
+
+# 리밸런싱 트레이딩 티커 호출
+get_ticker_list_of_tpv(10, trading_period, -1)
+get_ticker_list_of_tv(sort_dict_ticker_vs_tpv_values, trading_period, -1)
+trade_tickers = sort_dict_ticker_vs_tv_keys[0:10]
+print(trade_tickers)
+print(btc_profit)
+# 잔고 확인
+get_coin_bal()
+krw_bal = upbit.get_balance('KRW')
+print(bal_port)
+
+
+now = datetime.datetime.now()
+time_set = datetime.datetime(now.year, now.month, now.day)
+
+market_start = time_set + datetime.timedelta(hours=7, minutes=00)
+market_end = market_start + datetime.timedelta(minutes=30)
+
+rb_start = time_set + datetime.timedelta(hours=now.hour)
+rb_end = rb_start + datetime.timedelta(minutes=5)
+
+rb_add_start = time_set + datetime.timedelta(hours=now.hour, minutes=5)
+rb_add_end = rb_add_start + datetime.timedelta(minutes=5)
+
+rb_msg_start = time_set + datetime.timedelta(hours=now.hour, minutes=now.minute)
+rb_msg_end = rb_msg_start + datetime.timedelta(minutes=5)
+
+rec_profit_start = time_set + datetime.timedelta(hours=now.hour)
+rec_profit_stop = rec_profit_start + datetime.timedelta(minutes=5)
+
+set_initial_variables(0)  # 1회 실행 이후 반드시 0으로 돌릴 것
+
+while True:
+    try:
+        while True:
+            try:
+                get_coin_bal()
+                now = datetime.datetime.now()
+                time.sleep(1)
+                get_profit()
+
+
+                break
+            except:
+                pass
+
+        print(rb_start, rb_end)
+
+        if len(bal_ticker) != 0 and all_sell_sig == 1:
+            for i in bal_ticker:
+                upbit.sell_market_order(i, bal_dict[i])
+                print(i, '매도완료')
+                time.sleep(1)
+            bot.send_message('@chaesoone', 'Trading is terminated.')
+
+        # 장마감 전체매도
+        if market_end > now > market_start:
+
+            if bal_port != 0:
+                for i in bal_ticker:
+                    upbit.sell_market_order(i, bal_dict[i])
+                    print(i, '매도완료')
+                    time.sleep(1)
+                bot.send_message('@chaesoone', 'Market sell for all items is implemented.')
+            time.sleep(5)
+
+            get_ticker_list_of_tpv(10, trading_period, -1)
+            get_ticker_list_of_tv(sort_dict_ticker_vs_tpv_values, trading_period, -1)
+            time.sleep(1)
+            trade_tickers = sort_dict_ticker_vs_tv_keys
+            # print(trade_tickers)
+            while True:
+                try:
+                    krw_bal = upbit.get_balance('KRW')
+                    get_coin_bal()
+                    get_btc_rate()
+                    # print(bal_ticker)
+                    break
+                except:
+                    pass
+
+            # 전체종목 매수
+            if bal_port == 0 and btc_profit > 0:
+                for i in trade_tickers:
+                    if krw_bal > 1000:
+                        amount = krw_bal * 0.995 * sort_dict_ticker_vs_tv_ratio[i]
+                        upbit.buy_market_order(i, amount)
+                        print(i, int(amount), '매수완료')
+                        time.sleep(1)
+                time.sleep(5)
+                bot.send_message('@chaesoone', 'Portfolio is reorganized.')
+            elif bal_port == 0 and btc_profit <= 0:
+                bot.send_message('@chaesoone', 'Portfolio reorganization is suspended.')
+
+            market_start = market_start + datetime.timedelta(hours=mk_period)
+            market_end = market_start + datetime.timedelta(minutes=5)
+
+        elif now > market_end:
+
+            market_start = market_start + datetime.timedelta(hours=mk_period)
+            market_end = market_start + datetime.timedelta(minutes=5)
+
+        # 리밸런싱(수익화)
+        if rb_end > now > rb_start:
+            while True:
+                try:
+                    krw_bal = upbit.get_balance('KRW')
+                    get_coin_bal()
+                    get_profit()
+                    break
+                except:
+                    pass
+
+            if len(bal_ticker) != 0:
+                for i in bal_ticker:
+                    while True:
+                        try:
+                            rb_amount_1 = float(bal_dict[i]) * 0.2 * float(pyupbit.get_current_price(i))
+                            rb_amount_2 = float(bal_dict[i]) * 0.5 * float(pyupbit.get_current_price(i))
+
+                            if profit_dict[i] > rb_profit:
+                                if (rb_amount_1 > 5000) and (bal_krw_dict[i] > 25000):
+                                    upbit.sell_market_order(i, bal_dict[i] * 0.30)
+                                    print(i, '부분매도완료')
+                                    time.sleep(5)
+                                    bot.send_message('@chaesoone', '(SELL) ' + i + ' amount is decreased.')
+
+                                # elif (rb_amount_2 > 5000) and (30000 > bal_krw_dict[i] > 15000):
+                                #     upbit.sell_market_order(i, bal_dict[i] * 0.5)
+                                #     print(i, '부분매도완료')
+                                #     time.sleep(5)
+                                #     bot.send_message('@chaesoone', '(SELL) ' + i + ' amount has decreased.')
+
+                                elif bal_krw_dict[i] <= 25000:
+                                    upbit.sell_market_order(i, bal_dict[i])
+                                    print(i, '완전매도완료')
+                                    time.sleep(5)
+                                    bot.send_message('@chaesoone', '(SELL) ' + i + ' amount is eliminated.')
+
+                            time.sleep(1)
+                            break
+                        except:
+                            print('error #1')
+                            pass
+
+            rb_start = rb_start + datetime.timedelta(minutes=rb_period)
+            rb_end = rb_start + datetime.timedelta(minutes=2)
+
+        elif now > rb_end:
+
+            rb_start = rb_start + datetime.timedelta(minutes=rb_period)
+            rb_end = rb_start + datetime.timedelta(minutes=2)
+        #
+        # # 리밸런싱(추가매수)
+        # get_coin_bal()
+        # if len(bal_ticker) != 0:
+        #     get_profit()
+        #
+        # krw_bal = upbit.get_balance('KRW')
+        # now = datetime.datetime.now()
+        # if len(bal_ticker) != 0 and rb_add_end > now > rb_add_start:
+        #     if krw_bal > 5000:
+        #         amount = krw_bal * 0.995
+        #         upbit.buy_market_order(profit_min_ticker, amount)
+        #         print(profit_min_ticker, '추가매수완료')
+        #         time.sleep(5)
+        #
+        #         bot.send_message('@chaesoone', '(BUY) ' + str(profit_min_ticker) + ' amount has increased.')
+        #
+        #     rb_add_start = rb_add_start + datetime.timedelta(minutes=rb_period)
+        #     rb_add_end = rb_add_start + datetime.timedelta(minutes=5)
+        #
+        # elif now > rb_add_end:
+        #     rb_add_start = rb_add_start + datetime.timedelta(minutes=rb_period)
+        #     rb_add_end = rb_add_start + datetime.timedelta(minutes=5)
+
+        # 메시징
+        if len(bal_ticker) != 0 and now > rb_msg_start:
+            while True:
+                try:
+                    get_trade_ratio()
+                    get_profit()
+                    get_coin_bal()
+                    btc_change = (float(pyupbit.get_current_price("KRW-BTC")) / btc_ini - 1) * 100
+                    eth_change = (float(pyupbit.get_current_price("KRW-ETH")) / eth_ini - 1) * 100
+                    break
+                except:
+                    pass
+
+            msg_group_1 = '1. ' + bal_ticker[0] \
+                          + ' / ' + format(krw_coin_amount_ratio[bal_ticker[0]], '3.2f') + '%' \
+                          + ' / ' + format(profit_dict[bal_ticker[0]], '3.2f') + '%'
+
+            for i in range(len(bal_ticker)):
+
+                if i > 0:
+                    msg_group_1 = msg_group_1 \
+                                  + '\n' + str(i+1) + '. ' + bal_ticker[i] \
+                                  + ' / ' + format(krw_coin_amount_ratio[bal_ticker[i]], '3.2f') + '%' \
+                                  + ' / ' + format(profit_dict[bal_ticker[i]], '3.2f') + '%'
+
+            bot.send_message('@chaesoone', 'Rebalancing Bot v1.0'
+                             + '\n' + 'Running from 2021/11/30'
+                             + '\n\n' + 'Trading Portfolio'
+                             + '\n' + '(Ticker / Trading Ratio / Profit)'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + msg_group_1
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + 'Total Profit is ' + format(tot_profit, '3.2f') + '%'
+
+                             + '\n\n' + 'Price Change from 2021/11/30'
+                             + '\n' + '(Ticker / Change Rate)'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + '1. BTC / ' + format(btc_change, '3.2f') + '%'
+                             + '\n' + '2. ETH / ' + format(eth_change, '3.2f') + '%'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + 'Reference : UPBIT trading chart')
+
+            rb_msg_start = rb_msg_start + datetime.timedelta(minutes=msg_period)
+            rb_msg_end = rb_msg_start + datetime.timedelta(minutes=1)
+
+        elif len(bal_ticker) == 0 and now > rb_msg_start:
+            while True:
+                try:
+                    get_trade_ratio()
+                    btc_change = (float(pyupbit.get_current_price("KRW-BTC")) / btc_ini - 1) * 100
+                    eth_change = (float(pyupbit.get_current_price("KRW-ETH")) / eth_ini - 1) * 100
+                    break
+                except:
+                    pass
+
+            bot.send_message('@chaesoone', 'Rebalancing Bot v1.0'
+                             + '\n' + 'Running from 2021/11/30'
+                             + '\n\n' + 'Trading Portfolio'
+                             + '\n' + '(Ticker / Trading Ratio / Profit)'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + 'No Items'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + 'Total Profit is ' + format(tot_profit, '3.2f') + '%'
+
+                             + '\n\n' + 'Price Change from 2021/11/30'
+                             + '\n' + '(Ticker / Change Rate)'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + '1. BTC / ' + format(btc_change, '3.2f') + '%'
+                             + '\n' + '2. ETH / ' + format(eth_change, '3.2f') + '%'
+                             + '\n' + '-------------------------------------------------'
+                             + '\n' + 'Reference : UPBIT trading chart')
+
+            rb_msg_start = rb_msg_start + datetime.timedelta(minutes=msg_period)
+            rb_msg_end = rb_msg_start + datetime.timedelta(minutes=1)
+
+        elif now > rb_msg_end:
+            rb_msg_start = rb_msg_start + datetime.timedelta(minutes=msg_period)
+            rb_msg_end = rb_msg_start + datetime.timedelta(minutes=1)
+
+
+        if rec_profit_stop > now > rec_profit_start:  # 수익률 엑셀기록 및 텔레그램 그래프 전송
+        # if now > rec_profit_start:  # 새벽2시마다 수익률 엑셀기록
+            while True:
+                try:
+                    get_trade_ratio()
+                    btc_change = (float(pyupbit.get_current_price("KRW-BTC")) / btc_ini - 1) * 100
+                    eth_change = (float(pyupbit.get_current_price("KRW-ETH")) / eth_ini - 1) * 100
+                    break
+                except:
+                    pass
+            # # #
+            df = pd.read_excel('profit.xlsx')
+
+            #
+            new_profit = tot_profit
+            new_btc = btc_change
+            new_eth = eth_change
+            new_date = now - ini_date
+
+            #
+            profit_list = df['profit'].tolist()
+            print(profit_list)
+            date_list = df['date'].tolist()
+            btc_list = df['btc'].tolist()
+            eth_list = df['eth'].tolist()
+
+            #
+            profit_list.append(new_profit)
+            date_list.append(new_date)
+            btc_list.append(new_btc)
+            eth_list.append(new_eth)
+
+            #
+            raw_data = {'date': date_list, 'profit': profit_list, 'btc': btc_list, 'eth': eth_list}
+            raw_data = pd.DataFrame(raw_data)
+            raw_data.to_excel(excel_writer='profit.xlsx')
+            #
+            df = pd.read_excel('profit.xlsx')
+            print(df)
+
+            # 우선순위대로
+
+            plt.scatter(df['date'].iloc[-1], df['profit'].iloc[-1], color='crimson', marker='o', zorder=10)
+            plt.plot(df['date'], df['profit'], color='crimson', label='My Asset (Auto Trading)', zorder=9)
+            plt.scatter(df['date'].iloc[-1], df['btc'].iloc[-1], color='royalblue', marker='o', zorder=8)
+            plt.plot(df['date'], df['btc'], color='royalblue', label='BTC (Buy and Hold)', zorder=7)
+            plt.scatter(df['date'].iloc[-1], df['eth'].iloc[-1], color='darkorange', marker='o', zorder=6)
+            plt.plot(df['date'], df['eth'], color='darkorange', label='ETH (Buy and Hold)', zorder=5)
+
+            plt.axhline(df['profit'].iloc[-1], 0, 1, color='black', linestyle='--', linewidth=1, zorder=4)
+            plt.axhline(df['btc'].iloc[-1], 0, 1, color='black', linestyle='--', linewidth=1, zorder=3)
+            plt.axhline(df['eth'].iloc[-1], 0, 1, color='black', linestyle='--', linewidth=1, zorder=2)
+
+            plt.grid(True, zorder=1)
+
+            plt.xticks(rotation=0)
+            plt.xlabel('Elapsed Time (days)')
+            plt.ylabel('Change Rate (%)')
+            plt.title("Accumulated Asset Change from 2021/11/30")
+            plt.legend()
+
+            plt.savefig('profit.png')
+            plt.close()
+            bot.send_photo('@chaesoone', photo=open('profit.png', 'rb'))
+
+            rec_profit_start = rec_profit_start + datetime.timedelta(hours=rec_period)
+            rec_profit_stop = rec_profit_start + datetime.timedelta(minutes=5)
+
+        elif now > rec_profit_stop:
+            rec_profit_start = rec_profit_start + datetime.timedelta(hours=rec_period)
+            rec_profit_stop = rec_profit_start + datetime.timedelta(minutes=5)
+    except:
+        pass
+
+
