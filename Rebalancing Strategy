@@ -12,9 +12,9 @@ import pymysql
 start = time.time()
 
 # 업비트 로그인 정보 및 로그인 실행/
-bot = telegram.Bot('859518036:AAGnIbbetS1Jx5cSNu9dNd-ymoKlqtXJcQo')
-access = 'rwK8mqQTHnHBSOQpdsRZk3be8alUSkJ42BjUXR7Y'  # access key
-secret = 'PaVH57McZ7kO2FS2A8eXRGPSNEmc1e1s4XPFHHYq'  # secret key
+bot = telegram.Bot('')
+access =   # access key
+secret =   # secret key
 upbit = pyupbit.Upbit(access, secret)
 
 # 업비트 전체티커조회_list/
